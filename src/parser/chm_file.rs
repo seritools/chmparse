@@ -1,8 +1,7 @@
-use nom::{combinator::verify, error::context, error::ContextError, error::ParseError, IResult};
-
-use crate::directory_listing::DirectoryListing;
-use crate::header::Header;
-use crate::header_section_0::HeaderSection0;
+use super::ParseResult;
+use crate::parser::directory_listing::DirectoryListing;
+use crate::parser::header::Header;
+use crate::parser::header_section_0::HeaderSection0;
 
 #[derive(Debug)]
 pub struct ChmFile {
@@ -12,9 +11,7 @@ pub struct ChmFile {
 }
 
 impl ChmFile {
-    pub fn parse<'a, E: ParseError<&'a [u8]> + ContextError<&'a [u8]>>(
-        file: &'a [u8],
-    ) -> IResult<&'a [u8], Self, E> {
+    pub fn parse(file: &[u8]) -> ParseResult<'_, Self> {
         let i = file;
         let (i, header) = Header::parse(i)?;
 
@@ -27,15 +24,11 @@ impl ChmFile {
                 .checked_add(hs0_size)
                 .expect("overflow calculating end position of header section 0")];
 
-        let (_, header_section_0) = context(
-            "verify: file size equals saved size in header section",
-            verify(HeaderSection0::parse, |hs0| {
-                file.len() as u64 == hs0.file_size
-            }),
-        )(hs0_data)?;
+        let (_, header_section_0) = HeaderSection0::parse(file.len() as u64)(hs0_data)?;
 
         // TODO: give section table entries correct names
         // TODO: also add helper fns for the calcs we're doing here
+        // directory listing
         let dl_entry = &header.header_section_table[1];
         let dl_offset = dl_entry.file_offset as usize;
         let dl_size = dl_entry.length as usize;
@@ -55,32 +48,5 @@ impl ChmFile {
                 directory_listing,
             },
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const TEST_FILES: &[&str] = &[
-        "test-files/appverif.chm",
-        "test-files/c_readme.chm",
-        "test-files/WINBASE.chm",
-        "test-files/7-zip.chm",
-    ];
-
-    #[test]
-    fn it_works() {
-        for file in TEST_FILES {
-            println!("file: {}", file);
-            let content = std::fs::read(file).unwrap();
-            let result = ChmFile::parse(&content);
-
-            if let Ok((_, header)) = result {
-                println!("{:#X?}", &header);
-            } else {
-                crate::dbg_helper::print_err(&content, result)
-            }
-        }
     }
 }

@@ -1,7 +1,9 @@
-use nom::{
-    bytes::complete::tag, error::context, error::ContextError, error::ParseError,
-    number::complete::le_u32, number::complete::le_u64, IResult,
-};
+use nom::bytes::complete::tag;
+use nom::error::context;
+use nom::number::complete::le_u32;
+use nom::number::complete::le_u64;
+
+use super::ParseResult;
 
 #[derive(Debug)]
 pub struct Header {
@@ -15,9 +17,7 @@ pub struct Header {
 }
 
 impl Header {
-    pub fn parse<'a, E: ParseError<&'a [u8]> + ContextError<&'a [u8]>>(
-        i: &'a [u8],
-    ) -> IResult<&'a [u8], Self, E> {
+    pub fn parse(i: &[u8]) -> ParseResult<'_, Header> {
         context("CHM file format header", |i| {
             let (i, _) = tag(b"ITSF")(i)?;
             let (i, version) = le_u32(i)?;
@@ -27,13 +27,13 @@ impl Header {
             let (i, language_id) = le_u32(i)?;
 
             let (i, _) = context(
-                "first const guid in header",
-                crate::uuid_parse::parse_exact_uuid_v1(HEADER_GUID_1),
+                "first const uuid v1 in header",
+                crate::parser::uuid_parse::parse_exact_uuid_v1(HEADER_GUID_1),
             )(i)?;
 
             let (i, _) = context(
-                "second const guid in header",
-                crate::uuid_parse::parse_exact_uuid_v1(HEADER_GUID_2),
+                "second const uuid v1 in header",
+                crate::parser::uuid_parse::parse_exact_uuid_v1(HEADER_GUID_2),
             )(i)?;
 
             let (i, header_section_table) = parse_header_section_table(i)?;
@@ -76,7 +76,7 @@ pub struct HeaderSectionTableEntry {
 }
 
 impl HeaderSectionTableEntry {
-    fn parse<'a, E: ParseError<&'a [u8]>>(i: &'a [u8]) -> IResult<&'a [u8], Self, E> {
+    fn parse(i: &[u8]) -> ParseResult<'_, Self> {
         let (i, file_offset) = le_u64(i)?;
         let (i, length) = le_u64(i)?;
 
@@ -92,9 +92,7 @@ impl HeaderSectionTableEntry {
 
 pub type HeaderSectionTable = [HeaderSectionTableEntry; 2];
 
-fn parse_header_section_table<'a, E: ParseError<&'a [u8]>>(
-    i: &'a [u8],
-) -> IResult<&'a [u8], HeaderSectionTable, E> {
+fn parse_header_section_table(i: &[u8]) -> ParseResult<'_, HeaderSectionTable> {
     let (i, e1) = HeaderSectionTableEntry::parse(i)?;
     let (i, e2) = HeaderSectionTableEntry::parse(i)?;
 
