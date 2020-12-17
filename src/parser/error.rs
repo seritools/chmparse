@@ -16,9 +16,16 @@ pub enum ExternalParseError {
 
 #[derive(Debug, Snafu)]
 pub enum Error<'a> {
-    #[snafu(display("Parse error '{}' ({}) at {}\n{}{}", format!("{:?}", kind), kind.description(), "input", context, prev))]
+    #[snafu(display(
+        "Parse error '{}' ({}) at {}\n{}{}",
+        format!("{:?}", kind),
+        kind.description(),
+        input,
+        context,
+        prev
+    ))]
     NomError {
-        input: &'a [u8],
+        input: Input<'a>,
         kind: nom::error::ErrorKind,
         prev: PrevError<'a>,
         context: Context,
@@ -27,13 +34,13 @@ pub enum Error<'a> {
         "Parse error '{}' ({}) at {}\n    External error: {}\n{}{}",
         format!("{:?}", kind),
         kind.description(),
-        "input",
+        input,
         source,
         context,
         prev
     ))]
     ExternalError {
-        input: &'a [u8],
+        input: Input<'a>,
         kind: nom::error::ErrorKind,
         prev: PrevError<'a>,
         context: Context,
@@ -140,6 +147,60 @@ impl<'a> From<&'a [u8]> for Input<'a> {
 
 impl Display for Input<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("{:X?}", &self.0[0..self.0.len().min(8)]))
+        f.write_str("[")?;
+
+        let len = self.0.len();
+
+        if len == 0 {
+            f.write_str("]")?;
+            return Ok(());
+        } else {
+            f.write_str(" ")?
+        }
+
+        for byte in &self.0[0..len.min(8)] {
+            f.write_fmt(format_args!("{:02X} ", byte))?
+        }
+
+        if len > 8 {
+            f.write_str("... ")?;
+        }
+
+        f.write_str("]")?;
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn formats_empty_slice() {
+        assert_eq!(Input(&[]).to_string(), "[]");
+    }
+
+    #[test]
+    fn formats_up_to_len8_slice() {
+        assert_eq!(
+            Input(&[0x11, 0xfd, 0x1, 0x7c]).to_string(),
+            "[ 11 FD 01 7C ]"
+        );
+        assert_eq!(
+            Input(&[0x11, 0xfd, 0x1, 0x7c, 0xaa, 0x7b, 0xd0, 0x11]).to_string(),
+            "[ 11 FD 01 7C AA 7B D0 11 ]"
+        );
+    }
+    #[test]
+    fn formats_over_len8_slice() {
+        assert_eq!(
+            Input(&[
+                0x11, 0xfd, 0x1, 0x7c, 0xaa, 0x7b, 0xd0, 0x11, 0x9e, 0xc, 0x0, 0xa0, 0xc9, 0x22,
+                0xe6, 0xec,
+            ])
+            .to_string(),
+            "[ 11 FD 01 7C AA 7B D0 11 ... ]"
+        );
     }
 }
