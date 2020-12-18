@@ -1,4 +1,7 @@
-use super::ParseResult;
+use nom::Finish;
+use snafu::ResultExt;
+
+use crate::error::*;
 use crate::parser::directory_listing::DirectoryListing;
 use crate::parser::header::Header;
 use crate::parser::header_section_0::HeaderSection0;
@@ -11,18 +14,17 @@ pub struct ChmFile {
 }
 
 impl ChmFile {
-    pub fn parse(file: &[u8]) -> ParseResult<'_, Self> {
+    pub fn load(file: &[u8]) -> crate::Result<'_, Self> {
         let i = file;
-        let (i, header) = Header::parse(i)?;
+        let (i, header) = Header::parse(i)
+            .finish()
+            .map_err(|inner| HeaderParse { inner }.build())?;
 
         let hs0_entry = &header.header_section_table[0];
         let hs0_offset = hs0_entry.file_offset as usize;
         let hs0_size = hs0_entry.length as usize;
 
-        let hs0_data = &file[hs0_offset
-            ..hs0_offset
-                .checked_add(hs0_size)
-                .expect("overflow calculating end position of header section 0")];
+        let hs0_data = &file[hs0_offset..hs0_offset.checked_add(hs0_size).expect("oops")];
 
         let (_, header_section_0) = HeaderSection0::parse(file.len() as u64)(hs0_data)?;
 

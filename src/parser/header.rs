@@ -1,9 +1,12 @@
+use hex_literal::hex;
+use nameof::name_of;
 use nom::bytes::complete::tag;
 use nom::error::context;
 use nom::number::complete::le_u32;
 use nom::number::complete::le_u64;
+use uuid::Uuid;
 
-use super::ParseResult;
+use super::NomParseResult;
 
 #[derive(Debug)]
 pub struct Header {
@@ -17,8 +20,8 @@ pub struct Header {
 }
 
 impl Header {
-    pub fn parse(i: &[u8]) -> ParseResult<'_, Header> {
-        context("CHM file format header", |i| {
+    pub fn parse(i: &[u8]) -> NomParseResult<'_, Header> {
+        context(name_of!(type Header), |i| {
             let (i, _) = tag(b"ITSF")(i)?;
             let (i, version) = le_u32(i)?;
             let (i, total_header_length) = le_u32(i)?;
@@ -27,23 +30,21 @@ impl Header {
             let (i, language_id) = le_u32(i)?;
 
             let (i, _) = context(
-                "first const uuid v1 in header",
-                crate::parser::uuid_parse::parse_exact_uuid_v1(HEADER_GUID_1),
+                "first const UUID v1 in header",
+                crate::parser::uuid_parse::parse_exact_uuid(HEADER_GUID_1),
             )(i)?;
 
             let (i, _) = context(
-                "second const uuid v1 in header",
-                crate::parser::uuid_parse::parse_exact_uuid_v1(HEADER_GUID_2),
+                "second const UUID v1 in header",
+                crate::parser::uuid_parse::parse_exact_uuid(HEADER_GUID_2),
             )(i)?;
 
             let (i, header_section_table) = parse_header_section_table(i)?;
 
-            let (i, offset_first_content_section) = if version >= 3 {
-                let output = le_u64(i)?;
-                (output.0, Some(output.1))
-            } else {
-                (i, None)
-            };
+            // TODO: find out when to read `offset_first_content_section`
+            // "In Version 2 files, this data is not there and the content section
+            // starts immediately after the directory."
+            // Does that mean it's V3+ or V1?
 
             Ok((
                 i,
@@ -54,20 +55,15 @@ impl Header {
                     timestamp,
                     language_id,
                     header_section_table,
-                    offset_first_content_section,
+                    offset_first_content_section: None,
                 },
             ))
         })(i)
     }
 }
 
-const HEADER_GUID_1: [u8; 16] = [
-    0x10, 0xfd, 0x1, 0x7c, 0xaa, 0x7b, 0xd0, 0x11, 0x9e, 0xc, 0x0, 0xa0, 0xc9, 0x22, 0xe6, 0xec,
-];
-
-const HEADER_GUID_2: [u8; 16] = [
-    0x11, 0xfd, 0x1, 0x7c, 0xaa, 0x7b, 0xd0, 0x11, 0x9e, 0xc, 0x0, 0xa0, 0xc9, 0x22, 0xe6, 0xec,
-];
+const HEADER_GUID_1: Uuid = Uuid::from_bytes(hex!("10 FD017CAA7BD0119E0C00A0C922E6EC"));
+const HEADER_GUID_2: Uuid = Uuid::from_bytes(hex!("11 FD017CAA7BD0119E0C00A0C922E6EC"));
 
 #[derive(Debug)]
 pub struct HeaderSectionTableEntry {
@@ -76,25 +72,29 @@ pub struct HeaderSectionTableEntry {
 }
 
 impl HeaderSectionTableEntry {
-    fn parse(i: &[u8]) -> ParseResult<'_, Self> {
-        let (i, file_offset) = le_u64(i)?;
-        let (i, length) = le_u64(i)?;
+    fn parse(i: &[u8]) -> NomParseResult<'_, Self> {
+        context(name_of!(type HeaderSectionTableEntry), |i| {
+            let (i, file_offset) = le_u64(i)?;
+            let (i, length) = le_u64(i)?;
 
-        Ok((
-            i,
-            Self {
-                file_offset,
-                length,
-            },
-        ))
+            Ok((
+                i,
+                Self {
+                    file_offset,
+                    length,
+                },
+            ))
+        })(i)
     }
 }
 
 pub type HeaderSectionTable = [HeaderSectionTableEntry; 2];
 
-fn parse_header_section_table(i: &[u8]) -> ParseResult<'_, HeaderSectionTable> {
-    let (i, e1) = HeaderSectionTableEntry::parse(i)?;
-    let (i, e2) = HeaderSectionTableEntry::parse(i)?;
+fn parse_header_section_table(i: &[u8]) -> NomParseResult<'_, HeaderSectionTable> {
+    context(name_of!(type HeaderSectionTable), |i| {
+        let (i, e1) = HeaderSectionTableEntry::parse(i)?;
+        let (i, e2) = HeaderSectionTableEntry::parse(i)?;
 
-    Ok((i, [e1, e2]))
+        Ok((i, [e1, e2]))
+    })(i)
 }

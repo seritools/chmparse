@@ -10,7 +10,7 @@ use snafu::Snafu;
 #[derive(Debug, Snafu)]
 #[snafu(visibility = "pub(crate)")]
 pub enum ExternalParseError {
-    #[snafu(display("Uuid v1 parse error: {}", source))]
+    #[snafu(display("Uuid parse error: {}", source))]
     UuidFail { source: uuid::Error },
 }
 
@@ -24,7 +24,7 @@ pub enum Error<'a> {
         context,
         prev
     ))]
-    NomError {
+    Nom {
         input: Input<'a>,
         kind: nom::error::ErrorKind,
         prev: PrevError<'a>,
@@ -39,7 +39,7 @@ pub enum Error<'a> {
         context,
         prev
     ))]
-    ExternalError {
+    External {
         input: Input<'a>,
         kind: nom::error::ErrorKind,
         prev: PrevError<'a>,
@@ -52,15 +52,15 @@ pub enum Error<'a> {
 impl Error<'_> {
     pub fn input(&self) -> &[u8] {
         match self {
-            Error::NomError { input, .. } => input.0,
-            Error::ExternalError { input, .. } => input.0,
+            Error::Nom { input, .. } => input.0,
+            Error::External { input, .. } => input.0,
         }
     }
 }
 
 impl<'a> ParseError<&'a [u8]> for Error<'a> {
     fn from_error_kind(input: &'a [u8], kind: nom::error::ErrorKind) -> Self {
-        NomError {
+        Nom {
             input,
             kind,
             prev: PrevError::default(),
@@ -70,7 +70,7 @@ impl<'a> ParseError<&'a [u8]> for Error<'a> {
     }
 
     fn append(input: &'a [u8], kind: nom::error::ErrorKind, other: Self) -> Self {
-        NomError {
+        Nom {
             input,
             kind,
             prev: PrevError(Some(other.into())),
@@ -83,8 +83,8 @@ impl<'a> ParseError<&'a [u8]> for Error<'a> {
 impl ContextError<&[u8]> for Error<'_> {
     fn add_context(_: &[u8], ctx: &'static str, mut other: Self) -> Self {
         match &mut other {
-            Self::NomError { context, .. } => context.add_context(ctx),
-            Self::ExternalError { context, .. } => context.add_context(ctx),
+            Self::Nom { context, .. } => context.add_context(ctx),
+            Self::External { context, .. } => context.add_context(ctx),
         }
         other
     }
@@ -96,7 +96,7 @@ impl<'a> FromExternalError<&'a [u8], ExternalParseError> for Error<'a> {
         kind: nom::error::ErrorKind,
         source: ExternalParseError,
     ) -> Self {
-        ExternalError {
+        External {
             input,
             kind,
             prev: PrevError::default(),

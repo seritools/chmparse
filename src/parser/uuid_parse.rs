@@ -5,22 +5,22 @@ use nom::error::context;
 use snafu::ResultExt;
 use uuid::Uuid;
 
-use super::ParseResult;
+use super::NomParseResult;
 
-pub fn parse_uuid_v1(i: &[u8]) -> ParseResult<'_, Uuid> {
+pub fn parse_uuid(i: &[u8]) -> NomParseResult<'_, Uuid> {
     context(
-        "parse uuid v1",
+        "UUID",
         map_res(take(16usize), |bytes| {
             Uuid::from_slice(bytes).context(super::error::UuidFail)
         }),
     )(i)
 }
 
-pub fn parse_exact_uuid_v1(expected: [u8; 16]) -> impl Fn(&[u8]) -> ParseResult<'_, Uuid> {
+pub fn parse_exact_uuid(expected: Uuid) -> impl Fn(&[u8]) -> NomParseResult<'_, Uuid> {
     move |i| {
         context(
-            "check matching uuid v1",
-            verify(parse_uuid_v1, |uuid| *uuid.as_bytes() == expected),
+            "Check matching UUID",
+            verify(parse_uuid, |uuid| uuid.as_bytes() == expected.as_bytes()),
         )(i)
     }
 }

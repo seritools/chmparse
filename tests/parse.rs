@@ -1,6 +1,6 @@
 #![feature(or_patterns)]
 
-use chmparse::parser::ChmFile;
+use chmparse::ChmFile;
 
 use nom::HexDisplay;
 use nom::Offset;
@@ -16,7 +16,8 @@ const TEST_FILES: &[&str] = &[
 fn it_parses_test_files() {
     for file in TEST_FILES {
         let content = std::fs::read(file).unwrap();
-        match ChmFile::parse(&content) {
+
+        match ChmFile::load(&content) {
             Err(nom::Err::Error(e) | nom::Err::Failure(e)) => {
                 let offset = content.offset(e.input());
                 println!("File '{}' failed at offset {:#X}.", file, offset);

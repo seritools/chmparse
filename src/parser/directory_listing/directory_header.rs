@@ -1,15 +1,16 @@
+use hex_literal::hex;
+use nameof::name_of;
 use nom::bytes::complete::tag;
 use nom::combinator::map;
 use nom::combinator::map_opt;
 use nom::combinator::verify;
 use nom::error::context;
 use nom::number::complete::le_u32;
+use uuid::Uuid;
 
-use crate::parser::ParseResult;
+use crate::parser::NomParseResult;
 
-const DIRECTORY_HEADER_GUID: [u8; 16] = [
-    0x6a, 0x92, 0x02, 0x5d, 0x2e, 0x21, 0xd0, 0x11, 0x9d, 0xf9, 0x00, 0xa0, 0xc9, 0x22, 0xe6, 0xec,
-];
+const DIRECTORY_HEADER_GUID: Uuid = Uuid::from_bytes(hex!("6A92025D2E21D0119DF900A0C922E6EC"));
 
 #[derive(Debug)]
 pub struct DirectoryHeader {
@@ -26,10 +27,10 @@ pub struct DirectoryHeader {
 }
 
 impl DirectoryHeader {
-    pub fn parse(i: &[u8]) -> ParseResult<'_, Self> {
+    pub fn parse(i: &[u8]) -> NomParseResult<'_, Self> {
         const MINUS_ONE_LE: [u8; 4] = (-1i32).to_le_bytes();
 
-        context("directory listing", |i| {
+        context(name_of!(type DirectoryHeader), |i| {
             let (i, _) = tag(b"ITSP")(i)?;
             let (i, version) = le_u32(i)?;
             let (i, directory_header_length) = le_u32(i)?;
@@ -59,7 +60,7 @@ impl DirectoryHeader {
 
             let (i, _) = context(
                 "directory header guid",
-                crate::parser::uuid_parse::parse_exact_uuid_v1(DIRECTORY_HEADER_GUID),
+                crate::parser::uuid_parse::parse_exact_uuid(DIRECTORY_HEADER_GUID),
             )(i)?;
 
             let (i, _) = context(

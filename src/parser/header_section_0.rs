@@ -1,10 +1,11 @@
+use nameof::name_of;
 use nom::bytes::complete::tag;
 use nom::combinator::verify;
 use nom::error::context;
 use nom::number::complete::le_u32;
 use nom::number::complete::le_u64;
 
-use super::ParseResult;
+use super::NomParseResult;
 
 #[derive(Debug)]
 pub struct HeaderSection0 {
@@ -14,9 +15,9 @@ pub struct HeaderSection0 {
 }
 
 impl HeaderSection0 {
-    pub fn parse(expected_file_size: u64) -> impl Fn(&[u8]) -> ParseResult<'_, Self> {
+    pub fn parse(expected_file_size: u64) -> impl Fn(&[u8]) -> NomParseResult<'_, Self> {
         move |i| {
-            context("Header Section 0", |i| {
+            context(name_of!(type HeaderSection0), |i| {
                 let (i, _) = context("tag, always 0x0000_01FE", tag(&[0xFE, 0x01, 0x00, 0x00]))(i)?;
                 let (i, unknown_dword_1) = context("unknown dword 1", le_u32)(i)?;
                 let (i, file_size) = context(
