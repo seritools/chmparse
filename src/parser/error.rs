@@ -17,7 +17,7 @@ pub enum ExternalParseError {
 #[derive(Debug, Snafu)]
 pub enum Error<'a> {
     #[snafu(display(
-        "Parse error '{}' ({}) at {}\n{}{}",
+        "Parse error '{}' ({})\n    at {}{}{}",
         format!("{:?}", kind),
         kind.description(),
         input,
@@ -31,7 +31,7 @@ pub enum Error<'a> {
         context: Context,
     },
     #[snafu(display(
-        "Parse error '{}' ({}) at {}\n    External error: {}\n{}{}",
+        "Parse error '{}' ({})\n    at {}\n    External error:\n        {}{}{}",
         format!("{:?}", kind),
         kind.description(),
         input,
@@ -47,6 +47,15 @@ pub enum Error<'a> {
         #[snafu(source(from(ExternalParseError, Box::new)))]
         source: Box<ExternalParseError>,
     },
+}
+
+impl Error<'_> {
+    pub fn input(&self) -> &[u8] {
+        match self {
+            Error::NomError { input, .. } => input.0,
+            Error::ExternalError { input, .. } => input.0,
+        }
+    }
 }
 
 impl<'a> ParseError<&'a [u8]> for Error<'a> {
@@ -109,9 +118,9 @@ impl Context {
 impl Display for Context {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.0.len() > 0 {
-            f.write_str("Context:\n")?;
+            f.write_str("\nContext:")?;
             for context in &self.0 {
-                f.write_fmt(format_args!("    {}\n", context))?;
+                f.write_fmt(format_args!("\n    {}", context))?;
             }
         }
         Ok(())
