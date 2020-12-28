@@ -7,8 +7,10 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-nom = "6.0.1"
-uuid = { version = "0.8"}
+uuid = { version = "0.8" }
 snafu = "0.6"
-nameof = "1.2"
 hex-literal = "0.3"
+pahs = { version = "0.1.0-alpha.0", features = ["with_snafu"] }
+
+[patch.crates-io]
+pahs = { path = "../pahs" }

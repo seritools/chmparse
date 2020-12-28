@@ -1,10 +1,11 @@
-use nameof::name_of;
-use nom::error::context;
+use pahs::try_parse;
+use snafu::Snafu;
+
+use directory_header::{DirectoryHeader, DirectoryHeaderParseError};
+
+use super::{Driver, Pos, Progress};
 
 mod directory_header;
-pub use directory_header::DirectoryHeader;
-
-use super::NomParseResult;
 
 #[derive(Debug)]
 pub struct DirectoryListing {
@@ -12,11 +13,19 @@ pub struct DirectoryListing {
 }
 
 impl DirectoryListing {
-    pub fn parse(i: &[u8]) -> NomParseResult<'_, Self> {
-        context(name_of!(type DirectoryListing), |i| {
-            let (i, header) = DirectoryHeader::parse(i)?;
+    pub fn parse<'a>(
+        pd: &mut Driver,
+        pos: Pos<'a>,
+    ) -> Progress<'a, DirectoryListing, DirectoryListingParseError> {
+        let (pos, header) =
+            try_parse!(DirectoryHeader::parse(pd, pos).snafu(|_| DirectoryHeaderParse));
 
-            Ok((i, Self { header }))
-        })(i)
+        pos.success(DirectoryListing { header })
     }
+}
+
+#[derive(Debug, Snafu)]
+pub enum DirectoryListingParseError {
+    #[snafu(display("Failed to parse the directory header:\n{}", source))]
+    DirectoryHeaderParse { source: DirectoryHeaderParseError },
 }

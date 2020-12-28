@@ -1,14 +1,12 @@
 use hex_literal::hex;
-use nameof::name_of;
-use nom::bytes::complete::tag;
-use nom::combinator::map;
-use nom::combinator::map_opt;
-use nom::combinator::verify;
-use nom::error::context;
-use nom::number::complete::le_u32;
+use pahs::slice::num::u32_le;
+use pahs::slice::tag;
+use pahs::{sequence, Recoverable};
+use snafu::Snafu;
 use uuid::Uuid;
 
-use crate::parser::NomParseResult;
+use crate::parser::uuid::{parse_exact_uuid, ExactUuidError};
+use crate::parser::{Driver, Pos, Progress};
 
 const DIRECTORY_HEADER_GUID: Uuid = Uuid::from_bytes(hex!("6A92025D2E21D0119DF900A0C922E6EC"));
 
@@ -27,68 +25,135 @@ pub struct DirectoryHeader {
 }
 
 impl DirectoryHeader {
-    pub fn parse(i: &[u8]) -> NomParseResult<'_, Self> {
-        const MINUS_ONE_LE: [u8; 4] = (-1i32).to_le_bytes();
+    pub fn parse<'a>(
+        pd: &mut Driver,
+        pos: Pos<'a>,
+    ) -> Progress<'a, DirectoryHeader, DirectoryHeaderParseError> {
+        const MINUS_ONE: &[u8; 4] = &(-1i32).to_le_bytes();
 
-        context(name_of!(type DirectoryHeader), |i| {
-            let (i, _) = tag(b"ITSP")(i)?;
-            let (i, version) = le_u32(i)?;
-            let (i, directory_header_length) = le_u32(i)?;
-            let (i, _) = le_u32(i)?;
-            let (i, directory_chunk_size) = le_u32(i)?;
-            let (i, quickref_density) = le_u32(i)?;
-            let (i, index_tree_depth) = map_opt(le_u32, |value| match value {
-                1 => Some(IndexTreeDepth::NoIndex),
-                2 => Some(IndexTreeDepth::OneLevelOfPMGI),
-                _ => None,
-            })(i)?;
+        sequence!(
+            pd,
+            pos,
+            {
+                Self::tag(b"ITSP");
+                let version = u32_le;
+                let directory_header_length = u32_le;
 
-            let (i, root_index_chunk_number) =
-                map(
-                    le_u32,
-                    |value| if value == u32::MAX { None } else { Some(value) },
-                )(i)?;
+                // unknown
+                u32_le;
 
-            let (i, first_pmgl_chunk_number) = le_u32(i)?;
-            let (i, last_pmgl_chunk_number) = le_u32(i)?;
+                let directory_chunk_size = u32_le;
+                let quickref_density = u32_le;
+                let index_tree_depth = |pd, p| {
+                    u32_le(pd, p).into_snafu_leaf(|_| NotEnoughData).and_then(
+                        p,
+                        |value| match value {
+                            1 => Ok(IndexTreeDepth::NoIndex),
+                            2 => Ok(IndexTreeDepth::OneLevelOfPMGI),
+                            _ => Err(UnknownIndexTreeDepth.build()),
+                        },
+                    )
+                };
 
-            // unknown
-            let (i, _) = tag(MINUS_ONE_LE)(i)?;
+                let root_index_chunk_number =
+                    |pd, p| u32_le(pd, p).map(|val| if val == u32::MAX { None } else { Some(val) });
 
-            let (i, directory_chunk_count) = le_u32(i)?;
-            let (i, windows_language_id) = le_u32(i)?;
+                let first_pmgl_chunk_number = u32_le;
+                let last_pmgl_chunk_number = u32_le;
 
-            let (i, _) = context(
-                "directory header guid",
-                crate::parser::uuid_parse::parse_exact_uuid(DIRECTORY_HEADER_GUID),
-            )(i)?;
+                Self::tag(MINUS_ONE);
 
-            let (i, _) = context(
-                "verify: both dir header length are the same",
-                verify(le_u32, |&l| directory_header_length == l),
-            )(i)?;
+                let directory_chunk_count = u32_le;
+                let windows_language_id = u32_le;
 
-            // unknown
-            let (i, _) = tag(MINUS_ONE_LE)(i)?;
-            let (i, _) = tag(MINUS_ONE_LE)(i)?;
-            let (i, _) = tag(MINUS_ONE_LE)(i)?;
+                parse_exact_uuid(DIRECTORY_HEADER_GUID, |_| UuidFailed);
 
-            Ok((
-                i,
-                Self {
-                    version,
-                    directory_header_length,
-                    directory_chunk_size,
-                    quickref_density,
-                    index_tree_depth,
-                    root_index_chunk_number,
-                    first_pmgl_chunk_number,
-                    last_pmgl_chunk_number,
-                    directory_chunk_count,
-                    windows_language_id,
-                },
-            ))
-        })(i)
+                let _ = |pd, p| {
+                    u32_le(pd, p)
+                        .into_snafu_leaf(|_| NotEnoughData)
+                        .and_then(p, |len2| {
+                            if directory_header_length == len2 {
+                                Ok(len2)
+                            } else {
+                                Err(DirectoryHeaderLengthsDoNotMatch {
+                                    first: directory_header_length,
+                                    second: len2,
+                                }
+                                .build())
+                            }
+                        })
+                };
+
+                // unknown
+                Self::tag(MINUS_ONE);
+                Self::tag(MINUS_ONE);
+                Self::tag(MINUS_ONE);
+            },
+            Self {
+                version,
+                directory_header_length,
+                directory_chunk_size,
+                quickref_density,
+                index_tree_depth,
+                root_index_chunk_number,
+                first_pmgl_chunk_number,
+                last_pmgl_chunk_number,
+                directory_chunk_count,
+                windows_language_id,
+            }
+        )
+    }
+
+    fn tag<'a>(
+        expected: &'static [u8],
+    ) -> impl FnOnce(&mut Driver, Pos<'a>) -> Progress<'a, &'a [u8], DirectoryHeaderParseError>
+    {
+        move |pd, p| {
+            tag(expected)(pd, p).snafu_leaf(|_, pos| InvalidTag {
+                offset: pos.offset,
+                expected,
+            })
+        }
+    }
+}
+
+#[derive(Debug, Snafu)]
+pub enum DirectoryHeaderParseError {
+    #[snafu(display("Not enough data in the input"))]
+    NotEnoughData,
+
+    #[snafu(display("Unknown specified index tree depth"))]
+    UnknownIndexTreeDepth,
+
+    #[snafu(display("Invalid tag at {:#X}, expected: {:?}", offset, expected))]
+    InvalidTag {
+        offset: usize,
+        expected: &'static [u8],
+    },
+
+    #[snafu(display("Failed to parse a Uuid:\n{}", source))]
+    UuidFailed { source: ExactUuidError },
+
+    #[snafu(display("The two fields specifying the directory header length do not match (first: {:#X}, second: {:#X})", first, second))]
+    DirectoryHeaderLengthsDoNotMatch { first: u32, second: u32 },
+}
+
+impl From<()> for DirectoryHeaderParseError {
+    fn from(_: ()) -> Self {
+        NotEnoughData.build()
+    }
+}
+
+impl Recoverable for DirectoryHeaderParseError {
+    fn recoverable(&self) -> bool {
+        match self {
+            Self::NotEnoughData => true,
+            Self::UuidFailed { .. } => true,
+
+            Self::UnknownIndexTreeDepth => false,
+            Self::InvalidTag { .. } => false,
+            Self::DirectoryHeaderLengthsDoNotMatch { .. } => false,
+        }
     }
 }
 
