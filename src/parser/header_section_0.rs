@@ -1,5 +1,5 @@
-use pahs::slice::num::*;
 use pahs::slice::tag;
+use pahs::slice::{num::*, NotEnoughDataError};
 use pahs::{sequence, Recoverable};
 use snafu::Snafu;
 
@@ -29,7 +29,7 @@ impl HeaderSection0 {
                     let unknown_dword_1 = u32_le;
                     let file_size = |pd, p| {
                         u64_le(pd, p)
-                            .into_snafu_leaf(|_| NotEnoughData)
+                            .snafu_leaf(|_| NotEnoughData)
                             .and_then(p, |size| {
                                 if size == expected_file_size {
                                     Ok(size)
@@ -46,7 +46,7 @@ impl HeaderSection0 {
                     let unknown_dword_2 = u32_le;
                     let unknown_dword_3 = u32_le;
                 },
-                HeaderSection0 {
+                Self {
                     unknown_dword_1,
                     file_size,
                     unknown_dword_2,
@@ -58,9 +58,9 @@ impl HeaderSection0 {
 
     fn tag<'a>(
         expected: &'static [u8],
-    ) -> impl FnOnce(&mut Driver, Pos<'a>) -> Progress<'a, &'a [u8], HeaderSection0ParseError> {
+    ) -> impl Fn(&mut Driver, Pos<'a>) -> Progress<'a, &'a [u8], HeaderSection0ParseError> {
         move |pd, p| {
-            tag(expected)(pd, p).snafu_leaf(|_, pos| InvalidTag {
+            tag(expected)(pd, p).snafu_leaf(|pos| InvalidTag {
                 offset: pos.offset,
                 expected,
             })
@@ -83,8 +83,8 @@ pub enum HeaderSection0ParseError {
     FileSizeMismatch { expected: u64, parsed: u64 },
 }
 
-impl From<()> for HeaderSection0ParseError {
-    fn from(_: ()) -> Self {
+impl From<NotEnoughDataError> for HeaderSection0ParseError {
+    fn from(_: NotEnoughDataError) -> Self {
         NotEnoughData.build()
     }
 }

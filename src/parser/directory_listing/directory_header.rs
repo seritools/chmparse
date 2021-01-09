@@ -1,6 +1,6 @@
 use hex_literal::hex;
 use pahs::slice::num::u32_le;
-use pahs::slice::tag;
+use pahs::slice::{tag, NotEnoughDataError};
 use pahs::{sequence, Recoverable};
 use snafu::Snafu;
 use uuid::Uuid;
@@ -28,7 +28,7 @@ impl DirectoryHeader {
     pub fn parse<'a>(
         pd: &mut Driver,
         pos: Pos<'a>,
-    ) -> Progress<'a, DirectoryHeader, DirectoryHeaderParseError> {
+    ) -> Progress<'a, Self, DirectoryHeaderParseError> {
         const MINUS_ONE: &[u8; 4] = &(-1i32).to_le_bytes();
 
         sequence!(
@@ -45,14 +45,13 @@ impl DirectoryHeader {
                 let directory_chunk_size = u32_le;
                 let quickref_density = u32_le;
                 let index_tree_depth = |pd, p| {
-                    u32_le(pd, p).into_snafu_leaf(|_| NotEnoughData).and_then(
-                        p,
-                        |value| match value {
+                    u32_le(pd, p)
+                        .snafu_leaf(|_| NotEnoughData)
+                        .and_then(p, |value| match value {
                             1 => Ok(IndexTreeDepth::NoIndex),
                             2 => Ok(IndexTreeDepth::OneLevelOfPMGI),
                             _ => Err(UnknownIndexTreeDepth.build()),
-                        },
-                    )
+                        })
                 };
 
                 let root_index_chunk_number =
@@ -70,7 +69,7 @@ impl DirectoryHeader {
 
                 let _ = |pd, p| {
                     u32_le(pd, p)
-                        .into_snafu_leaf(|_| NotEnoughData)
+                        .snafu_leaf(|_| NotEnoughData)
                         .and_then(p, |len2| {
                             if directory_header_length == len2 {
                                 Ok(len2)
@@ -106,10 +105,9 @@ impl DirectoryHeader {
 
     fn tag<'a>(
         expected: &'static [u8],
-    ) -> impl FnOnce(&mut Driver, Pos<'a>) -> Progress<'a, &'a [u8], DirectoryHeaderParseError>
-    {
+    ) -> impl Fn(&mut Driver, Pos<'a>) -> Progress<'a, &'a [u8], DirectoryHeaderParseError> {
         move |pd, p| {
-            tag(expected)(pd, p).snafu_leaf(|_, pos| InvalidTag {
+            tag(expected)(pd, p).snafu_leaf(|pos| InvalidTag {
                 offset: pos.offset,
                 expected,
             })
@@ -131,15 +129,15 @@ pub enum DirectoryHeaderParseError {
         expected: &'static [u8],
     },
 
-    #[snafu(display("Failed to parse a Uuid:\n{}", source))]
+    #[snafu(display("Failed to parse an exact Uuid:\n{}", source))]
     UuidFailed { source: ExactUuidError },
 
     #[snafu(display("The two fields specifying the directory header length do not match (first: {:#X}, second: {:#X})", first, second))]
     DirectoryHeaderLengthsDoNotMatch { first: u32, second: u32 },
 }
 
-impl From<()> for DirectoryHeaderParseError {
-    fn from(_: ()) -> Self {
+impl From<NotEnoughDataError> for DirectoryHeaderParseError {
+    fn from(_: NotEnoughDataError) -> Self {
         NotEnoughData.build()
     }
 }
@@ -149,9 +147,9 @@ impl Recoverable for DirectoryHeaderParseError {
         match self {
             Self::NotEnoughData => true,
             Self::UuidFailed { .. } => true,
+            Self::InvalidTag { .. } => true,
 
             Self::UnknownIndexTreeDepth => false,
-            Self::InvalidTag { .. } => false,
             Self::DirectoryHeaderLengthsDoNotMatch { .. } => false,
         }
     }

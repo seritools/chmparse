@@ -20,7 +20,13 @@ impl Recoverable for UuidError {
 #[derive(Debug, Snafu)]
 #[snafu(visibility = "pub(crate)")]
 pub enum ExactUuidError {
+    #[snafu(display("Uuid parse failed:{}\n", source))]
     ParseFailed { source: UuidError },
+    #[snafu(display(
+        "Uuid successfully parsed, but is different from the expected:\n    Expected: {}\n    Parsed: {}",
+        expected,
+        parsed
+    ))]
     WrongUuid { expected: Uuid, parsed: Uuid },
 }
 
@@ -48,13 +54,13 @@ fn parse_exact_uuid_inner(
         if uuid == expected {
             Progress::success(np, uuid)
         } else {
-            p.fail().map_err(|_| {
+            p.failure(
                 WrongUuid {
                     expected,
                     parsed: uuid,
                 }
-                .build()
-            })
+                .build(),
+            )
         }
     }
 }

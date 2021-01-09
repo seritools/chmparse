@@ -59,7 +59,7 @@ fn it_parses_test_files() {
                 panic!();
             }
             Ok(c) => {
-                println!("{:?}", c);
+                println!("{:#X?}", c);
             }
         };
     }

@@ -6,6 +6,8 @@ use directory_header::{DirectoryHeader, DirectoryHeaderParseError};
 use super::{Driver, Pos, Progress};
 
 mod directory_header;
+mod index_chunk;
+mod listing_chunk;
 
 #[derive(Debug)]
 pub struct DirectoryListing {
@@ -16,11 +18,11 @@ impl DirectoryListing {
     pub fn parse<'a>(
         pd: &mut Driver,
         pos: Pos<'a>,
-    ) -> Progress<'a, DirectoryListing, DirectoryListingParseError> {
+    ) -> Progress<'a, Self, DirectoryListingParseError> {
         let (pos, header) =
             try_parse!(DirectoryHeader::parse(pd, pos).snafu(|_| DirectoryHeaderParse));
 
-        pos.success(DirectoryListing { header })
+        pos.success(Self { header })
     }
 }
 

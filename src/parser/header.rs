@@ -1,6 +1,6 @@
 use hex_literal::hex;
 use pahs::slice::num::{u32_le, u64_le};
-use pahs::slice::tag;
+use pahs::slice::{tag, NotEnoughDataError};
 use pahs::{sequence, ParseDriver, Recoverable};
 use snafu::Snafu;
 use uuid::Uuid;
@@ -43,10 +43,14 @@ impl Header {
                 let header_section_table =
                     |pd, p| HeaderSectionTable::parse(pd, p).snafu(|_| HeaderSectionTableFailed);
 
-                // TODO: find out when to read `offset_first_content_section`
-                // "In Version 2 files, this data is not there and the content section
-                // starts immediately after the directory."
-                // Does that mean it's there in V3+ or in V1?
+                let offset_first_content_section = |pd, p| {
+                    if version > 2 {
+                        u64_le(pd, p).map(Some)
+                    } else {
+                        // v2 does not have this field
+                        p.success(None)
+                    }
+                };
             },
             Header {
                 version,
@@ -55,16 +59,16 @@ impl Header {
                 timestamp,
                 language_id,
                 header_section_table,
-                offset_first_content_section: None
+                offset_first_content_section
             }
         )
     }
 
     fn tag<'a>(
         expected: &'static [u8],
-    ) -> impl FnOnce(&mut Driver, Pos<'a>) -> Progress<'a, &'a [u8], HeaderParseError> {
+    ) -> impl Fn(&mut Driver, Pos<'a>) -> Progress<'a, &'a [u8], HeaderParseError> {
         move |pd, p| {
-            tag(expected)(pd, p).snafu_leaf(|_, pos| InvalidTag {
+            tag(expected)(pd, p).snafu_leaf(|pos| InvalidTag {
                 offset: pos.offset,
                 expected,
             })
@@ -83,7 +87,7 @@ pub enum HeaderParseError {
         expected: &'static [u8],
     },
 
-    #[snafu(display("Failed to parse a Uuid:\n{}", source))]
+    #[snafu(display("Failed to parse an exact Uuid:\n{}", source))]
     UuidFailed { source: super::uuid::ExactUuidError },
 
     #[snafu(display("Failed to parse the header section table:\n{}", source))]
@@ -94,15 +98,15 @@ impl Recoverable for HeaderParseError {
     fn recoverable(&self) -> bool {
         match self {
             Self::NotEnoughData => true,
-            Self::InvalidTag { .. } => false,
+            Self::InvalidTag { .. } => true,
             Self::UuidFailed { source } => source.recoverable(),
             Self::HeaderSectionTableFailed { source } => source.recoverable(),
         }
     }
 }
 
-impl From<()> for HeaderParseError {
-    fn from(_: ()) -> Self {
+impl From<NotEnoughDataError> for HeaderParseError {
+    fn from(_: NotEnoughDataError) -> Self {
         NotEnoughData.build()
     }
 }
@@ -130,7 +134,9 @@ impl HeaderSectionTableEntry {
                 length
             }
         )
-        .into_snafu_leaf(|pos| HeaderSectionTableContext { offset: pos.offset })
+        .into_snafu_leaf(|_: NotEnoughDataError, pos| HeaderSectionTableContext {
+            offset: pos.offset,
+        })
     }
 }
 
@@ -164,7 +170,7 @@ impl HeaderSectionTable {
                 let header_section_0 = HeaderSectionTableEntry::parse;
                 let directory_listing_entry = HeaderSectionTableEntry::parse;
             },
-            HeaderSectionTable {
+            Self {
                 header_section_0,
                 directory_listing_entry
             }
