@@ -4,10 +4,10 @@
 use chmparse::{ChmFile, ChmFileError};
 
 const TEST_FILES: &[&str] = &[
+    "test-files/7-zip.chm",
     "test-files/appverif.chm",
     "test-files/c_readme.chm",
     "test-files/WINBASE.chm",
-    "test-files/7-zip.chm",
 ];
 
 #[test]

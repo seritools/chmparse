@@ -7,6 +7,11 @@ use crate::parser::{Driver, Pos, Progress};
 pub struct IndexChunk {}
 
 impl IndexChunk {
+    // pub fn parse<'a>(
+    //     chunk_size: usize,
+    // ) -> impl Fn(&mut Driver, Pos<'a>) -> Progress<'a, Self, IndexChunkParseError> {
+    // }
+
     fn tag<'a>(
         expected: &'static [u8],
     ) -> impl Fn(&mut Driver, Pos<'a>) -> Progress<'a, &'a [u8], IndexChunkParseError> {

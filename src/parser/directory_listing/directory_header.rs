@@ -20,7 +20,7 @@ pub struct DirectoryHeader {
     pub root_index_chunk_number: Option<u32>,
     pub first_pmgl_chunk_number: u32,
     pub last_pmgl_chunk_number: u32,
-    pub directory_chunk_count: u32,
+    pub total_directory_chunk_count: u32,
     pub windows_language_id: u32,
 }
 
@@ -97,7 +97,7 @@ impl DirectoryHeader {
                 root_index_chunk_number,
                 first_pmgl_chunk_number,
                 last_pmgl_chunk_number,
-                directory_chunk_count,
+                total_directory_chunk_count: directory_chunk_count,
                 windows_language_id,
             }
         )
