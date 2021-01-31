@@ -125,6 +125,15 @@ impl From<NotEnoughDataError> for ListingChunkParseError {
     }
 }
 
+impl Recoverable for ListingChunkParseError {
+    fn recoverable(&self) -> bool {
+        match self {
+            Self::InvalidChunkEntry { source, .. } => source.recoverable(),
+            _ => true,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ListingChunkEntry {
     name: String,
