@@ -1,104 +1,120 @@
-use pahs::ParseDriver;
-use snafu::{ResultExt, Snafu};
+use std::collections::HashMap;
 
-use crate::parser::directory_listing::{DirectoryListing, DirectoryListingParseError};
-use crate::parser::header::{Header, HeaderParseError};
-use crate::parser::header_section_0::{HeaderSection0, HeaderSection0ParseError};
-use crate::parser::Pos;
+use pahs::try_parse;
+use pahs_snafu::ProgressSnafuExt;
+use smallvec::SmallVec;
+use snafu::Snafu;
+
+use crate::directory_listing::listing_chunk::ListingChunkEntry;
+use crate::{ChmFileHead, Driver, ParseChmFileHeadError, Pos, Progress};
 
 #[derive(Debug)]
-pub struct ChmFile {
-    header: Header,
-    header_section_0: HeaderSection0,
-    directory_listing: DirectoryListing,
+pub enum ContentSection<'a> {
+    Uncompressed(ContentSectionPosition, &'a [u8]),
+    /// LZX compression
+    MsCompressed(ContentSectionPosition, Option<Box<[u8]>>),
 }
 
-impl ChmFile {
-    pub fn load(file: &'_ [u8]) -> Result<ChmFile, ChmFileError> {
-        let pd = &mut ParseDriver::new();
+#[derive(Debug)]
+pub struct ContentSectionPosition {
+    offset: usize,
+    len: usize,
+}
 
+#[derive(Debug)]
+pub struct ChmFile<'a> {
+    file: &'a [u8],
+    // content sections except content section 0
+    extra_content_sections: SmallVec<[ContentSection<'a>; 2]>,
+    file_entries: HashMap<&'a str, FileEntry>,
+}
+
+impl<'a> ChmFile<'a> {
+    pub fn parse(
+        pd: &mut Driver,
+        pos: Pos<'a>,
+        file: &'a [u8],
+    ) -> Progress<'a, Self, ParseChmFileError> {
+        let (_, head) = try_parse!(ChmFileHead::parse(pd, pos, file).snafu(|_| ParseChmFileHead));
+
+        let file_entry_count: usize = head
+            .directory_listing
+            .entries
+            .iter()
+            .map(|chunk| chunk.entries.len())
+            .sum();
+
+        let mut file_entries: HashMap<_, _> = HashMap::with_capacity(file_entry_count);
+
+        file_entries.extend(head.directory_listing.entries.iter().flat_map(|chunk| {
+            chunk
+                .entries
+                .iter()
+                .cloned()
+                .map(|e| (e.name, FileEntry::from(e)))
+        }));
+
+        // the section name list contains is inside the first section
+        // and contains the names of all other sections
+        let (_, section_name_list) = try_parse!(Progress::from_result(
+            pos,
+            file_entries
+                .get("::DataSpace/NameList")
+                .ok_or_else(|| MissingContentSectionNameList.build()),
+        ));
+
+        if section_name_list.content_section != 0 {
+            return Progress::failure(pos, ContentSectionNameListNotInContentSection0.build());
+        }
+
+        Progress::success(
+            pos,
+            ChmFile {
+                file,
+                file_entries,
+                extra_content_sections: SmallVec::default(),
+            },
+        )
+    }
+
+    pub fn load(file: &'a [u8]) -> Result<Self, ParseChmFileError> {
+        let pd = &mut Driver::with_state(Default::default());
         let pos = Pos::new(file);
-        let (_, header) = Header::parse(pd, pos).finish();
-        let header = header.context(HeaderParse { offset: pos.offset })?;
 
-        let hs0_entry = &header.header_section_table.header_section_0;
-        let hs0_offset = hs0_entry.file_offset as usize;
-        let hs0_size = hs0_entry.length as usize;
-
-        let hs0_data = &file[hs0_offset
-            ..hs0_offset
-                .checked_add(hs0_size)
-                .ok_or_else(|| HeaderSection0OutOfBounds.build())?];
-        let pos = Pos {
-            offset: hs0_offset,
-            s: hs0_data,
-        };
-
-        let (_, header_section_0) = HeaderSection0::parse(file.len() as u64)(pd, pos).finish();
-        let header_section_0 =
-            header_section_0.context(HeaderSection0Parse { offset: pos.offset })?;
-
-        let dl_entry = &header.header_section_table.directory_listing_entry;
-        let dl_offset = dl_entry.file_offset as usize;
-        let dl_size = dl_entry.length as usize;
-
-        let dl_data = &file[dl_offset
-            ..dl_offset
-                .checked_add(dl_size)
-                .ok_or_else(|| DirectoryListingOutOfBounds.build())?];
-
-        let pos = Pos {
-            offset: dl_offset,
-            s: dl_data,
-        };
-
-        let (_, directory_listing) = DirectoryListing::parse(pd, pos).finish();
-        let directory_listing =
-            directory_listing.context(DirectoryListingParse { offset: pos.offset })?;
-
-        Ok(ChmFile {
-            header,
-            header_section_0,
-            directory_listing,
-        })
+        Self::parse(pd, pos, file).finish().1
     }
 }
 
 #[derive(Debug, Snafu)]
-#[snafu(visibility = "pub")]
-pub enum ChmFileError {
-    #[snafu(display("The header at {:#X} could not be parsed:\n{}", offset, source))]
-    HeaderParse {
-        offset: usize,
-        #[snafu(source(from(HeaderParseError, Box::new)))]
-        source: Box<HeaderParseError>,
-    },
+pub enum ParseChmFileError {
+    #[snafu(display("Error parsing the file header:\n{}", source))]
+    ParseChmFileHead { source: ParseChmFileHeadError },
 
-    #[snafu(display("The location of the header section 0 was out of bounds."))]
-    HeaderSection0OutOfBounds,
+    #[snafu(display("Missing content section name list"))]
+    MissingContentSectionNameList,
+    #[snafu(display("Content section name list not in first context section"))]
+    ContentSectionNameListNotInContentSection0,
+}
 
-    #[snafu(display(
-        "The header section 0 at offset {:#X} could not be parsed:\n{}",
-        offset,
-        source
-    ))]
-    HeaderSection0Parse {
-        offset: usize,
-        #[snafu(source(from(HeaderSection0ParseError, Box::new)))]
-        source: Box<HeaderSection0ParseError>,
-    },
+#[derive(Debug, Clone, Copy)]
+pub struct FileEntry {
+    pub content_section: u64,
+    pub content_section_offset: u64,
+    pub content_length: u64,
+}
 
-    #[snafu(display("The location of the directory listing was out of bounds."))]
-    DirectoryListingOutOfBounds,
-
-    #[snafu(display(
-        "The directory listing at offset {:#X} could not be parsed:\n{}",
-        offset,
-        source
-    ))]
-    DirectoryListingParse {
-        offset: usize,
-        #[snafu(source(from(DirectoryListingParseError, Box::new)))]
-        source: Box<DirectoryListingParseError>,
-    },
+impl From<ListingChunkEntry<'_>> for FileEntry {
+    fn from(entry: ListingChunkEntry<'_>) -> Self {
+        let ListingChunkEntry {
+            content_section,
+            content_section_offset,
+            content_length,
+            ..
+        } = entry;
+        Self {
+            content_section,
+            content_section_offset,
+            content_length,
+        }
+    }
 }

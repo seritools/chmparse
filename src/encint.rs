@@ -1,4 +1,5 @@
 use pahs::try_parse;
+use pahs_snafu::ProgressSnafuExt;
 use snafu::Snafu;
 
 use super::{Driver, Pos, Progress};
@@ -12,7 +13,7 @@ use super::{Driver, Pos, Progress};
 pub fn parse_encint_be<'a>(
     _: &mut Driver,
     mut pos: Pos<'a>,
-) -> Progress<'a, u64, EncIntParseError> {
+) -> Progress<'a, u64, ParseEncIntError> {
     const CONTINUE: u8 = 0b1000_0000;
 
     let initial_pos = pos;
@@ -48,7 +49,7 @@ pub fn parse_encint_be<'a>(
 }
 
 #[derive(Debug, Snafu)]
-pub enum EncIntParseError {
+pub enum ParseEncIntError {
     #[snafu(display("Not enough data in the input"))]
     NotEnoughData,
     #[snafu(display("Encoded integer longer than u64::MAX"))]
@@ -66,11 +67,11 @@ mod test {
             offset: 0,
             s: input,
         };
-        let pd = &mut Driver::new();
+        let pd = &mut Driver::with_state(Default::default());
 
         let (pos_out, err) = parse_encint_be(pd, pos).unwrap_err();
         assert_eq!(pos, pos_out);
-        assert!(matches!(err, EncIntParseError::NotEnoughData));
+        assert!(matches!(err, ParseEncIntError::NotEnoughData));
     }
 
     #[test]
@@ -85,11 +86,11 @@ mod test {
                 offset: 0,
                 s: input,
             };
-            let pd = &mut Driver::new();
+            let pd = &mut Driver::with_state(Default::default());
 
             let (pos_out, err) = parse_encint_be(pd, pos).unwrap_err();
             assert_eq!(pos, pos_out);
-            assert!(matches!(err, EncIntParseError::NotEnoughData));
+            assert!(matches!(err, ParseEncIntError::NotEnoughData));
         }
     }
 
@@ -120,11 +121,11 @@ mod test {
                 offset: 0,
                 s: input,
             };
-            let pd = &mut Driver::new();
+            let pd = &mut Driver::with_state(Default::default());
 
             let (pos_out, err) = parse_encint_be(pd, pos).unwrap_err();
             assert_eq!(pos, pos_out);
-            assert!(matches!(err, EncIntParseError::EncodedIntegerTooLong));
+            assert!(matches!(err, ParseEncIntError::EncodedIntegerTooLong));
         }
     }
 
@@ -158,7 +159,7 @@ mod test {
                 offset: 0,
                 s: input,
             };
-            let pd = &mut Driver::new();
+            let pd = &mut Driver::with_state(Default::default());
 
             let (Pos { offset, .. }, val) = parse_encint_be(pd, pos).unwrap();
             assert_eq!(offset, input.len());

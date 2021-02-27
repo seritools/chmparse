@@ -10,7 +10,14 @@ edition = "2018"
 uuid = { version = "0.8" }
 snafu = "0.6"
 hex-literal = "0.3"
-pahs = { version = "0.1.0-alpha.0", features = ["with_snafu"] }
+pahs = { version = "0.1.0-alpha.3", path = "../pahs" }
+pahs-snafu = { version = "0.1.0-alpha.3", path = "../pahs/pahs-snafu" }
+lzxd = "0.1"
+smallvec = { version = "1.6", features = ["union"] }
+nameof = "1.2"
 
-[patch.crates-io]
-pahs = { path = "../pahs" }
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.build-override]
+opt-level = 3

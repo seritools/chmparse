@@ -1,7 +1,7 @@
 #![feature(or_patterns)]
 #![feature(bindings_after_at)]
 
-use chmparse::{ChmFile, ChmFileError};
+use chmparse::{ChmFile, ParseChmFileError, ParseChmFileHeadError};
 
 const TEST_FILES: &[&str] = &[
     "test-files/7-zip.chm",
@@ -20,9 +20,13 @@ fn it_parses_test_files() {
             Err(
                 e
                 @
-                (ChmFileError::HeaderParse { offset, .. }
-                | ChmFileError::DirectoryListingParse { offset, .. }
-                | ChmFileError::HeaderSection0Parse { offset, .. }),
+                ParseChmFileError::ChmHead {
+                    source:
+                        ParseChmFileHeadError::HeaderParse { offset, .. }
+                        | ParseChmFileHeadError::DirectoryListingParse { offset, .. }
+                        | ParseChmFileHeadError::HeaderSection0Parse { offset, .. },
+                    ..
+                },
             ) => {
                 println!("File failed at offset {:#X}.", offset);
                 println!("File content:");

@@ -1,17 +1,18 @@
-use pahs::{try_parse, ParseDriver, Recoverable};
+use pahs::{try_parse, Recoverable};
+use pahs_snafu::ProgressSnafuExt;
 use snafu::{ResultExt, Snafu};
 use uuid::Uuid;
 
-use super::{Pos, Progress};
+use super::{Driver, Pos, Progress};
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility = "pub(crate)")]
-pub enum UuidError {
+pub enum ParseUuidError {
     NotEnoughData,
     UuidParseFailed { source: uuid::Error },
 }
 
-impl Recoverable for UuidError {
+impl Recoverable for ParseUuidError {
     fn recoverable(&self) -> bool {
         true
     }
@@ -19,9 +20,9 @@ impl Recoverable for UuidError {
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility = "pub(crate)")]
-pub enum ExactUuidError {
+pub enum ParseExactUuidError {
     #[snafu(display("Uuid parse failed:{}\n", source))]
-    ParseFailed { source: UuidError },
+    ParseFailed { source: ParseUuidError },
     #[snafu(display(
         "Uuid successfully parsed, but is different from the expected:\n    Expected: {}\n    Parsed: {}",
         expected,
@@ -30,16 +31,16 @@ pub enum ExactUuidError {
     WrongUuid { expected: Uuid, parsed: Uuid },
 }
 
-impl Recoverable for ExactUuidError {
+impl Recoverable for ParseExactUuidError {
     fn recoverable(&self) -> bool {
         match self {
-            ExactUuidError::ParseFailed { source } => source.recoverable(),
-            ExactUuidError::WrongUuid { .. } => false,
+            ParseExactUuidError::ParseFailed { source } => source.recoverable(),
+            ParseExactUuidError::WrongUuid { .. } => false,
         }
     }
 }
 
-pub fn parse_uuid(p: Pos<'_>) -> Progress<'_, Uuid, UuidError> {
+pub fn parse_uuid(p: Pos<'_>) -> Progress<'_, Uuid, ParseUuidError> {
     p.take(16)
         .map_err(|_| NotEnoughData.build())
         .and_then(p, |b| Uuid::from_slice(b).context(UuidParseFailed))
@@ -47,7 +48,7 @@ pub fn parse_uuid(p: Pos<'_>) -> Progress<'_, Uuid, UuidError> {
 
 fn parse_exact_uuid_inner(
     expected: Uuid,
-) -> impl Fn(Pos<'_>) -> Progress<'_, Uuid, ExactUuidError> {
+) -> impl Fn(Pos<'_>) -> Progress<'_, Uuid, ParseExactUuidError> {
     move |p| {
         let (np, uuid) = try_parse!(parse_uuid(p).snafu(|_| ParseFailed));
 
@@ -68,9 +69,9 @@ fn parse_exact_uuid_inner(
 pub fn parse_exact_uuid<'a, C, F, E2>(
     expected: Uuid,
     context_fn: F,
-) -> impl FnOnce(&mut ParseDriver, Pos<'a>) -> Progress<'a, Uuid, E2>
+) -> impl FnOnce(&mut Driver, Pos<'a>) -> Progress<'a, Uuid, E2>
 where
-    C: snafu::IntoError<E2, Source = ExactUuidError>,
+    C: snafu::IntoError<E2, Source = ParseExactUuidError>,
     F: FnOnce(Pos<'_>) -> C,
     E2: std::error::Error + snafu::ErrorCompat,
 {

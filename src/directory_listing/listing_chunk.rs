@@ -5,20 +5,24 @@ use pahs::combinators::zero_or_more;
 use pahs::slice::num::u32_le;
 use pahs::slice::{tag, NotEnoughDataError};
 use pahs::{sequence, try_parse, Recoverable};
+use pahs_snafu::ProgressSnafuExt;
 use snafu::{IntoError, ResultExt, Snafu};
 
-use crate::parser::encint::{parse_encint_be, EncIntParseError};
-use crate::parser::{Driver, Pos, Progress};
+use crate::encint::{parse_encint_be, ParseEncIntError};
+use crate::{Driver, Pos, Progress};
 
 #[derive(Debug)]
-pub struct IndexChunk {
-    entries: Vec<IndexChunkEntry>,
+pub struct ListingChunk<'a> {
+    chunk_index_before: Option<u32>,
+    chunk_index_after: Option<u32>,
+    pub(crate) entries: Vec<ListingChunkEntry<'a>>,
 }
 
-impl IndexChunk {
-    pub fn parse<'a>(
+impl<'a> ListingChunk<'a> {
+    pub fn parse(
         chunk_size: usize,
-    ) -> impl Fn(&mut Driver, Pos<'a>) -> Progress<'a, Self, IndexChunkParseError> {
+    ) -> impl Fn(&mut Driver, Pos<'a>) -> Progress<'a, ListingChunk<'a>, ParseListingChunkError>
+    {
         move |pd, pos| {
             let (end_of_chunk, chunk_data) =
                 try_parse!(pos.take(chunk_size).snafu_leaf(|pos| ChunkOutOfBounds {
@@ -31,7 +35,7 @@ impl IndexChunk {
                 ..pos
             };
 
-            let (pos, _) = try_parse!(Self::tag(b"PMGI")(pd, pos));
+            let (pos, _) = try_parse!(Self::tag(b"PMGL")(pd, pos));
             let (pos, quickref_len) = try_parse!(u32_le(pd, pos));
 
             let len_of_rest_of_non_quickref_area = match pos
@@ -55,16 +59,34 @@ impl IndexChunk {
                 ..pos
             };
 
-            let (_, entries) = try_parse!(zero_or_more(IndexChunkEntry::parse)(pd, pos)
+            // always 0 according to russotto's chm format spec, 7-zip.chm has 0D 00 00 00 here
+            // the value is unused, so just skip over these 4 bytes
+            let (pos, _) = try_parse!(pos.take(4));
+
+            let num_except_minus_one = |pd: &mut _, pos| {
+                u32_le(pd, pos).map(|i| if i == 0xFFFF_FFFF { None } else { Some(i) })
+            };
+
+            let (pos, chunk_index_before) = try_parse!(num_except_minus_one(pd, pos));
+            let (pos, chunk_index_after) = try_parse!(num_except_minus_one(pd, pos));
+
+            let (_, entries) = try_parse!(zero_or_more(ListingChunkEntry::parse)(pd, pos)
                 .snafu(|pos| InvalidChunkEntry { offset: pos.offset }));
 
-            Progress::success(end_of_chunk, Self { entries })
+            Progress::success(
+                end_of_chunk,
+                Self {
+                    chunk_index_before,
+                    chunk_index_after,
+                    entries,
+                },
+            )
         }
     }
 
-    fn tag<'a>(
+    fn tag(
         expected: &'static [u8],
-    ) -> impl Fn(&mut Driver, Pos<'a>) -> Progress<'a, &'a [u8], IndexChunkParseError> {
+    ) -> impl Fn(&mut Driver, Pos<'a>) -> Progress<'a, &'a [u8], ParseListingChunkError> {
         move |pd, p| {
             tag(expected)(pd, p).snafu_leaf(|pos| InvalidTag {
                 offset: pos.offset,
@@ -75,7 +97,7 @@ impl IndexChunk {
 }
 
 #[derive(Debug, Snafu)]
-pub enum IndexChunkParseError {
+pub enum ParseListingChunkError {
     #[snafu(display("Not enough data in the chunk"))]
     NotEnoughDataInChunk,
 
@@ -95,17 +117,17 @@ pub enum IndexChunkParseError {
     #[snafu(display("Invalid listing chunk entry at {:#X}:\n{}", offset, source))]
     InvalidChunkEntry {
         offset: usize,
-        source: IndexChunkEntryParseError,
+        source: ParseListingChunkEntryError,
     },
 }
 
-impl From<NotEnoughDataError> for IndexChunkParseError {
+impl From<NotEnoughDataError> for ParseListingChunkError {
     fn from(_: NotEnoughDataError) -> Self {
         NotEnoughDataInChunk.build()
     }
 }
 
-impl Recoverable for IndexChunkParseError {
+impl Recoverable for ParseListingChunkError {
     fn recoverable(&self) -> bool {
         match self {
             Self::InvalidChunkEntry { source, .. } => source.recoverable(),
@@ -114,16 +136,18 @@ impl Recoverable for IndexChunkParseError {
     }
 }
 
-#[derive(Debug)]
-pub struct IndexChunkEntry {
-    name: String,
-    listing_chunk_starting_with_name: u64,
+#[derive(Debug, Clone)]
+pub struct ListingChunkEntry<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) content_section: u64,
+    pub(crate) content_section_offset: u64,
+    pub(crate) content_length: u64,
 }
 
-impl IndexChunkEntry {
-    fn parse<'a>(pd: &mut Driver, pos: Pos<'a>) -> Progress<'a, Self, IndexChunkEntryParseError> {
+impl<'a> ListingChunkEntry<'a> {
+    fn parse(pd: &mut Driver, pos: Pos<'a>) -> Progress<'a, Self, ParseListingChunkEntryError> {
         let (pos, name_len) = try_parse!(parse_encint_be(pd, pos).map_err(|e| {
-            if let EncIntParseError::NotEnoughData = e {
+            if let ParseEncIntError::NotEnoughData = e {
                 NotEnoughData.build()
             } else {
                 LengthOfNameInvalid.into_error(e)
@@ -143,30 +167,37 @@ impl IndexChunkEntry {
                     pos.take(name_len)
                         .snafu_leaf(|_| NameStringOutOfBounds)
                         .and_then(pos, |s| std::str::from_utf8(s).context(NameInvalidUtf8))
-                        .map(|s| s.to_owned())
                 };
-                let listing_chunk_starting_with_name =
-                    |pd, pos| parse_encint_be(pd, pos).snafu(|_| ChunkNumberInvalid);
+                let content_section_index =
+                    |pd, pos| parse_encint_be(pd, pos).snafu(|_| ContentSectionNumberInvalid);
+                let content_section_offset =
+                    |pd, pos| parse_encint_be(pd, pos).snafu(|_| ContentSectionOffsetInvalid);
+                let content_length =
+                    |pd, pos| parse_encint_be(pd, pos).snafu(|_| ContentLengthInvalid);
             },
-            Self {
+            ListingChunkEntry {
                 name,
-                listing_chunk_starting_with_name,
+                content_section: content_section_index,
+                content_section_offset,
+                content_length
             }
         )
     }
 }
 
 #[derive(Debug, Snafu)]
-pub enum IndexChunkEntryParseError {
+pub enum ParseListingChunkEntryError {
     NotEnoughData,
-    LengthOfNameInvalid { source: EncIntParseError },
+    LengthOfNameInvalid { source: ParseEncIntError },
     NameTooLong,
     NameStringOutOfBounds,
     NameInvalidUtf8 { source: Utf8Error },
-    ChunkNumberInvalid { source: EncIntParseError },
+    ContentSectionNumberInvalid { source: ParseEncIntError },
+    ContentSectionOffsetInvalid { source: ParseEncIntError },
+    ContentLengthInvalid { source: ParseEncIntError },
 }
 
-impl Recoverable for IndexChunkEntryParseError {
+impl Recoverable for ParseListingChunkEntryError {
     fn recoverable(&self) -> bool {
         matches!(self, Self::NotEnoughData)
     }

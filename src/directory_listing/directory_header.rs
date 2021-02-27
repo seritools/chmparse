@@ -2,11 +2,12 @@ use hex_literal::hex;
 use pahs::slice::num::u32_le;
 use pahs::slice::{tag, NotEnoughDataError};
 use pahs::{sequence, Recoverable};
+use pahs_snafu::ProgressSnafuExt;
 use snafu::Snafu;
 use uuid::Uuid;
 
-use crate::parser::uuid::{parse_exact_uuid, ExactUuidError};
-use crate::parser::{Driver, Pos, Progress};
+use crate::uuid::{parse_exact_uuid, ParseExactUuidError};
+use crate::{Driver, Pos, Progress};
 
 const DIRECTORY_HEADER_GUID: Uuid = Uuid::from_bytes(hex!("6A92025D2E21D0119DF900A0C922E6EC"));
 
@@ -28,7 +29,7 @@ impl DirectoryHeader {
     pub fn parse<'a>(
         pd: &mut Driver,
         pos: Pos<'a>,
-    ) -> Progress<'a, Self, DirectoryHeaderParseError> {
+    ) -> Progress<'a, Self, ParseDirectoryHeaderError> {
         const MINUS_ONE: &[u8; 4] = &(-1i32).to_le_bytes();
 
         sequence!(
@@ -49,7 +50,7 @@ impl DirectoryHeader {
                         .snafu_leaf(|_| NotEnoughData)
                         .and_then(p, |value| match value {
                             1 => Ok(IndexTreeDepth::NoIndex),
-                            2 => Ok(IndexTreeDepth::OneLevelOfPMGI),
+                            2 => Ok(IndexTreeDepth::OneLevelOfPmgi),
                             _ => Err(UnknownIndexTreeDepth.build()),
                         })
                 };
@@ -65,7 +66,7 @@ impl DirectoryHeader {
                 let directory_chunk_count = u32_le;
                 let windows_language_id = u32_le;
 
-                parse_exact_uuid(DIRECTORY_HEADER_GUID, |_| UuidFailed);
+                parse_exact_uuid(DIRECTORY_HEADER_GUID, |_| ParseUuidFailed);
 
                 let _ = |pd, p| {
                     u32_le(pd, p)
@@ -105,7 +106,7 @@ impl DirectoryHeader {
 
     fn tag<'a>(
         expected: &'static [u8],
-    ) -> impl Fn(&mut Driver, Pos<'a>) -> Progress<'a, &'a [u8], DirectoryHeaderParseError> {
+    ) -> impl Fn(&mut Driver, Pos<'a>) -> Progress<'a, &'a [u8], ParseDirectoryHeaderError> {
         move |pd, p| {
             tag(expected)(pd, p).snafu_leaf(|pos| InvalidTag {
                 offset: pos.offset,
@@ -116,7 +117,7 @@ impl DirectoryHeader {
 }
 
 #[derive(Debug, Snafu)]
-pub enum DirectoryHeaderParseError {
+pub enum ParseDirectoryHeaderError {
     #[snafu(display("Not enough data in the input"))]
     NotEnoughData,
 
@@ -130,23 +131,23 @@ pub enum DirectoryHeaderParseError {
     },
 
     #[snafu(display("Failed to parse an exact Uuid:\n{}", source))]
-    UuidFailed { source: ExactUuidError },
+    ParseUuidFailed { source: ParseExactUuidError },
 
     #[snafu(display("The two fields specifying the directory header length do not match (first: {:#X}, second: {:#X})", first, second))]
     DirectoryHeaderLengthsDoNotMatch { first: u32, second: u32 },
 }
 
-impl From<NotEnoughDataError> for DirectoryHeaderParseError {
+impl From<NotEnoughDataError> for ParseDirectoryHeaderError {
     fn from(_: NotEnoughDataError) -> Self {
         NotEnoughData.build()
     }
 }
 
-impl Recoverable for DirectoryHeaderParseError {
+impl Recoverable for ParseDirectoryHeaderError {
     fn recoverable(&self) -> bool {
         match self {
             Self::NotEnoughData => true,
-            Self::UuidFailed { .. } => true,
+            Self::ParseUuidFailed { .. } => true,
             Self::InvalidTag { .. } => true,
 
             Self::UnknownIndexTreeDepth => false,
@@ -158,5 +159,5 @@ impl Recoverable for DirectoryHeaderParseError {
 #[derive(Debug)]
 pub enum IndexTreeDepth {
     NoIndex,
-    OneLevelOfPMGI,
+    OneLevelOfPmgi,
 }

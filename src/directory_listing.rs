@@ -1,53 +1,58 @@
-use index_chunk::IndexChunk;
-use listing_chunk::{ListingChunk, ListingChunkParseError};
+use listing_chunk::{ListingChunk, ParseListingChunkError};
 use pahs::combinators::count_push_into;
-use pahs::{try_parse, Recoverable};
+use pahs::{try_parse, Push, Recoverable};
+use pahs_snafu::ProgressSnafuExt;
 use snafu::Snafu;
 
-use directory_header::{DirectoryHeader, DirectoryHeaderParseError};
-
-use self::index_chunk::IndexChunkParseError;
-
 use super::{Driver, Pos, Progress};
+use directory_header::{DirectoryHeader, ParseDirectoryHeaderError};
+use index_chunk::{parse_index_chunk, ParseIndexChunkError};
 
 mod directory_header;
 mod index_chunk;
-mod listing_chunk;
+pub mod listing_chunk;
 
-#[derive(Debug)]
-pub enum DirectoryListingChunk {
-    ListingChunk(ListingChunk),
-    IndexChunk(IndexChunk),
+enum Chunk<'a> {
+    Listing(ListingChunk<'a>),
+    Index,
+}
+
+#[derive(Default)]
+struct OnlyListingChunks<'a>(Vec<ListingChunk<'a>>);
+
+impl<'a> Push<Chunk<'a>> for OnlyListingChunks<'a> {
+    fn push(&mut self, value: Chunk<'a>) {
+        if let Chunk::Listing(chunk) = value {
+            self.0.push(chunk)
+        }
+    }
 }
 
 #[derive(Debug)]
-pub struct DirectoryListing {
+pub struct DirectoryListing<'a> {
     pub header: DirectoryHeader,
-    pub entries: Vec<DirectoryListingChunk>,
+    pub entries: Vec<ListingChunk<'a>>,
 }
 
-impl DirectoryListing {
-    pub fn parse<'a>(
-        pd: &mut Driver,
-        pos: Pos<'a>,
-    ) -> Progress<'a, Self, DirectoryListingParseError> {
+impl<'a> DirectoryListing<'a> {
+    pub fn parse(pd: &mut Driver, pos: Pos<'a>) -> Progress<'a, Self, ParseDirectoryListingError> {
         let (pos, header) =
             try_parse!(DirectoryHeader::parse(pd, pos).snafu(|_| DirectoryHeaderParse));
 
-        let (pos, entries) = try_parse!(count_push_into(
+        let (pos, OnlyListingChunks(entries)) = try_parse!(count_push_into(
             header.total_directory_chunk_count as usize,
-            Vec::new,
+            OnlyListingChunks::default,
             |pd: &mut Driver, pos| pd
                 .alternate(pos)
                 .one(
                     |pd, pos| ListingChunk::parse(header.directory_chunk_size as usize)(pd, pos)
                         .snafu(|pos| ListingChunkParse { offset: pos.offset })
-                        .map(DirectoryListingChunk::ListingChunk)
+                        .map(Chunk::Listing)
                 )
                 .one(
-                    |pd, pos| IndexChunk::parse(header.directory_chunk_size as usize)(pd, pos)
+                    |pd, pos| parse_index_chunk(header.directory_chunk_size as usize)(pd, pos)
                         .snafu(|pos| IndexChunkParse { offset: pos.offset })
-                        .map(DirectoryListingChunk::IndexChunk)
+                        .map(|_| Chunk::Index)
                 )
                 .finish()
         )(pd, pos));
@@ -57,24 +62,24 @@ impl DirectoryListing {
 }
 
 #[derive(Debug, Snafu)]
-pub enum DirectoryListingParseError {
+pub enum ParseDirectoryListingError {
     #[snafu(display("Failed to parse the directory header:\n{}", source))]
-    DirectoryHeaderParse { source: DirectoryHeaderParseError },
+    DirectoryHeaderParse { source: ParseDirectoryHeaderError },
 
     #[snafu(display("Failed to parse a listing chunk at {:#X}:\n{}", offset, source))]
     ListingChunkParse {
         offset: usize,
-        source: ListingChunkParseError,
+        source: ParseListingChunkError,
     },
 
     #[snafu(display("Failed to parse an index chunk at {:#X}:\n{}", offset, source))]
     IndexChunkParse {
         offset: usize,
-        source: IndexChunkParseError,
+        source: ParseIndexChunkError,
     },
 }
 
-impl Recoverable for DirectoryListingParseError {
+impl Recoverable for ParseDirectoryListingError {
     fn recoverable(&self) -> bool {
         match self {
             Self::DirectoryHeaderParse { source, .. } => source.recoverable(),

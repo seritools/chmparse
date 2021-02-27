@@ -1,6 +1,7 @@
 use pahs::slice::tag;
 use pahs::slice::{num::*, NotEnoughDataError};
 use pahs::{sequence, Recoverable};
+use pahs_snafu::ProgressSnafuExt;
 use snafu::Snafu;
 
 use super::{Driver, Pos, Progress};
@@ -16,7 +17,7 @@ pub struct HeaderSection0 {
 impl HeaderSection0 {
     pub fn parse<'a>(
         expected_file_size: u64,
-    ) -> impl Fn(&mut Driver, Pos<'a>) -> Progress<'a, Self, HeaderSection0ParseError> {
+    ) -> impl Fn(&mut Driver, Pos<'a>) -> Progress<'a, Self, ParseHeaderSection0Error> {
         const TAG: &[u8; 4] = &[0xFE, 0x01, 0x00, 0x00];
 
         move |pd, pos| {
@@ -58,7 +59,7 @@ impl HeaderSection0 {
 
     fn tag<'a>(
         expected: &'static [u8],
-    ) -> impl Fn(&mut Driver, Pos<'a>) -> Progress<'a, &'a [u8], HeaderSection0ParseError> {
+    ) -> impl Fn(&mut Driver, Pos<'a>) -> Progress<'a, &'a [u8], ParseHeaderSection0Error> {
         move |pd, p| {
             tag(expected)(pd, p).snafu_leaf(|pos| InvalidTag {
                 offset: pos.offset,
@@ -69,7 +70,7 @@ impl HeaderSection0 {
 }
 
 #[derive(Debug, Snafu)]
-pub enum HeaderSection0ParseError {
+pub enum ParseHeaderSection0Error {
     #[snafu(display("Not enough data in the input"))]
     NotEnoughData,
 
@@ -83,13 +84,13 @@ pub enum HeaderSection0ParseError {
     FileSizeMismatch { expected: u64, parsed: u64 },
 }
 
-impl From<NotEnoughDataError> for HeaderSection0ParseError {
+impl From<NotEnoughDataError> for ParseHeaderSection0Error {
     fn from(_: NotEnoughDataError) -> Self {
         NotEnoughData.build()
     }
 }
 
-impl Recoverable for HeaderSection0ParseError {
+impl Recoverable for ParseHeaderSection0Error {
     fn recoverable(&self) -> bool {
         match self {
             Self::NotEnoughData => true,
