@@ -60,8 +60,7 @@ impl NameListEntry {
 
 #[derive(Debug, Default)]
 pub(crate) struct NameList {
-    pub(crate) has_uncompressed: bool,
-    pub(crate) has_ms_compressed: bool,
+    pub(crate) has_ms_compressed_section: bool,
 }
 
 impl NameList {
@@ -94,18 +93,21 @@ impl NameList {
             );
         }
 
-        let (_, entries) = try_parse!(count::<_, _, ParseNameListError, _, _>(
-            num_entries as usize,
-            NameListEntry::parse
-        )(pd, pos));
+        // todo: vec → smallvec
+        let (_, entries) = try_parse!(count(num_entries as usize, NameListEntry::parse)(pd, pos));
 
         let mut name_list = NameList::default();
+        let mut has_uncompressed = false;
 
         for entry in entries {
             match entry {
-                NameListEntry::Uncompressed => name_list.has_uncompressed = true,
-                NameListEntry::MsCompressed => name_list.has_ms_compressed = true,
+                NameListEntry::Uncompressed => has_uncompressed = true,
+                NameListEntry::MsCompressed => name_list.has_ms_compressed_section = true,
             }
+        }
+
+        if !has_uncompressed {
+            return Progress::failure(pos, MissingUncompressedSectionEntry.build());
         }
 
         Progress::success(end, name_list)
@@ -125,6 +127,7 @@ pub enum ParseNameListError {
     },
     NameListEntryNotNullTerminated,
     UnknownSectionName,
+    MissingUncompressedSectionEntry,
 }
 
 impl Recoverable for ParseNameListError {
@@ -132,6 +135,7 @@ impl Recoverable for ParseNameListError {
         use ParseNameListError::*;
         match self {
             NotEnoughData => true,
+            MissingUncompressedSectionEntry => true,
             TooManyNameListEntries { .. } => false,
             NameListEntryNotNullTerminated => false,
             UnknownSectionName => false,

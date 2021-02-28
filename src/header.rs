@@ -20,7 +20,6 @@ pub struct Header {
     pub timestamp: u32,
     pub language_id: u32,
     pub header_section_table: HeaderSectionTable,
-    /// Not all files set this correctly (e.g. 7-zip.chm)
     pub offset_content_section_0: Option<u64>,
 }
 
@@ -47,12 +46,7 @@ impl Header {
 
                 let offset_content_section_0 = |pd: &mut Driver, p: Pos<'a>| {
                     if version > 2 {
-                        // treat 0 as None because not all files set this correctly
-                        pd.state.warnings.push((
-                            p.offset,
-                            "Header: offset_first_content_section was set to 0 (invalid)",
-                        ));
-                        u64_le(pd, p).map(|o| if o == 0 { None } else { Some(o) })
+                        u64_le(pd, p).map(Some)
                     } else {
                         // v2 does not have this field
                         p.success(None)

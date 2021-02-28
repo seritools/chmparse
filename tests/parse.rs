@@ -20,11 +20,11 @@ fn it_parses_test_files() {
             Err(
                 e
                 @
-                ParseChmFileError::ChmHead {
+                ParseChmFileError::ParseChmFileHead {
                     source:
-                        ParseChmFileHeadError::HeaderParse { offset, .. }
-                        | ParseChmFileHeadError::DirectoryListingParse { offset, .. }
-                        | ParseChmFileHeadError::HeaderSection0Parse { offset, .. },
+                        ParseChmFileHeadError::ParseHeader { offset, .. }
+                        | ParseChmFileHeadError::ParseDirectoryListing { offset, .. }
+                        | ParseChmFileHeadError::ParseHeaderSection0 { offset, .. },
                     ..
                 },
             ) => {
@@ -62,8 +62,8 @@ fn it_parses_test_files() {
                 println!("{}", e);
                 panic!();
             }
-            Ok(c) => {
-                println!("{:#X?}", c);
+            Ok(_) => {
+                // dbg!(file);
             }
         };
     }

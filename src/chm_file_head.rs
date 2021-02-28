@@ -15,7 +15,7 @@ pub struct ChmFileHead<'a> {
     header: Header,
     header_section_0: HeaderSection0,
     pub(crate) directory_listing: DirectoryListing<'a>,
-    pub(crate) actual_offset_content_section_0: usize,
+    pub(crate) offset_content_section_0: usize,
 }
 
 impl<'a> ChmFileHead<'a> {
@@ -78,7 +78,7 @@ impl<'a> ChmFileHead<'a> {
                 header,
                 header_section_0,
                 directory_listing,
-                actual_offset_content_section_0: offset_content_section_0,
+                offset_content_section_0,
             },
         )
     }
